@@ -1,32 +1,35 @@
+# src/arbitrage/conditions.py
+from __future__ import annotations
+
+def binary_qty_to_cover_vanilla(Qv: float, Pv_usd: float, fee_usd: float, Pb: float) -> float:
+    """
+    QB = QV * (PV + F) / (1 - PB)
+    where PV is vanilla premium in USD terms, PB in (0,1), F in USD. (Paper Section 3.2)
+    """
+    if Pb <= 0 or Pb >= 1:
+        raise ValueError("Pb must be in (0,1).")
+    if Qv <= 0:
+        raise ValueError("Qv must be > 0.")
+    return Qv * (Pv_usd + fee_usd) / (1.0 - Pb)
 
 
-def binary_qty_to_cover_vanilla(Qv: float, Pv: float, fee: float, Pb: float) -> float:
+def kv_bound_for_call_case(Kb: float, Qv: float, Pv_usd: float, Pb: float) -> float:
     """
-    Quantity of binary contracts needed to cover the vanilla premium.
-    From paper: QB = QV (PV + F) / (1 - PB)  (Section 3.2) :contentReference[oaicite:5]{index=5}
+    Vanilla CALL + Binary PUT case.
+    Unified condition rearranged:
+      KV <= KB - (QV * PV) / (1 - PB)
     """
-    if Pb >= 1:
-        raise ValueError("Pb must be < 1 (binary option price in (0,1)).")
-    return Qv * (Pv + fee) / (1 - Pb)
+    if Pb <= 0 or Pb >= 1:
+        raise ValueError("Pb must be in (0,1).")
+    return Kb - (Qv * Pv_usd) / (1.0 - Pb)
 
 
-def vanilla_strike_bound_call(Kb: float, Qv: float, Pv: float, Pb: float) -> float:
+def kv_bound_for_put_case(Kb: float, Qv: float, Pv_usd: float, Pb: float) -> float:
     """
-    For direction: vanilla CALL + binary PUT.
-    Unified condition rearranged gives upper bound for KV:
-    KV <= KB - (QV*PV)/(1 - PB)   (Section 3.2) :contentReference[oaicite:6]{index=6}
+    Vanilla PUT + Binary CALL case.
+    Unified condition rearranged:
+      KV >= KB + (QV * PV) / (1 - PB)
     """
-    if Pb >= 1:
-        raise ValueError("Pb must be < 1.")
-    return Kb - (Qv * Pv) / (1 - Pb)
-
-
-def vanilla_strike_bound_put(Kb: float, Qv: float, Pv: float, Pb: float) -> float:
-    """
-    For direction: vanilla PUT + binary CALL.
-    Unified condition rearranged gives lower bound for KV:
-    KV >= KB + (QV*PV)/(1 - PB)   (Section 3.2) :contentReference[oaicite:7]{index=7}
-    """
-    if Pb >= 1:
-        raise ValueError("Pb must be < 1.")
-    return Kb + (Qv * Pv) / (1 - Pb)
+    if Pb <= 0 or Pb >= 1:
+        raise ValueError("Pb must be in (0,1).")
+    return Kb + (Qv * Pv_usd) / (1.0 - Pb)
