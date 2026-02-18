@@ -16,49 +16,52 @@ def scan_opportunities(
     min_edge: float = 0.0,
 ) -> pd.DataFrame:
     """
-    Scan for arbitrage opportunities using the unified condition.
+    Paper-aligned scanner.
 
-    Expected input columns:
+    Inputs (expected columns):
       spot_df:    date, underlying, spot
-      binary_df:  date, underlying, expiry, strike, price
-      vanilla_df: date, underlying, expiry, strike, type, price_usd (or price)
+      binary_df:  date, underlying, expiry, strike, price        (Polymarket: price in USD in (0,1))
+      vanilla_df: date, underlying, expiry, strike, type, price  (Deribit: price often in underlying units)
+                 optionally vanilla_df may have price_usd already
+
+    Key paper rules:
+      - decision time is 08:00 UTC (your dataset should already be built that way) :contentReference[oaicite:4]{index=4}
+      - direction:
+          if Kb < spot:   binary is PUT, vanilla must be CALL
+          else:           binary is CALL, vanilla must be PUT :contentReference[oaicite:5]{index=5}
+      - unify condition uses vanilla premium in USD terms for consistency with binary payoff 
 
     Returns:
-      DataFrame of TradeCandidates (one row per candidate), sorted by edge desc.
+      DataFrame of candidates sorted by edge desc.
     """
 
-    # copies + normalization
+    # Copies
     spot = spot_df.copy()
     binary = binary_df.copy()
     vanilla = vanilla_df.copy()
 
-    # vanilla: allow either 'price_usd' or 'price'
-    if "price_usd" not in vanilla.columns:
-        if "price" in vanilla.columns:
-            vanilla = vanilla.rename(columns={"price": "price_usd"})
-        else:
-            raise ValueError("vanilla_df must contain 'price_usd' or 'price' column.")
-
-    # normalize types
+    # Normalize string keys
     for df in (spot, binary, vanilla):
-        if "date" in df.columns:
-            df["date"] = df["date"].astype(str)
+        for c in ("date", "underlying"):
+            if c in df.columns:
+                df[c] = df[c].astype(str).str.strip()
         if "underlying" in df.columns:
-            df["underlying"] = df["underlying"].astype(str)
+            df["underlying"] = df["underlying"].str.upper()
 
-    if "expiry" in binary.columns:
-        binary["expiry"] = binary["expiry"].astype(str)
-    if "expiry" in vanilla.columns:
-        vanilla["expiry"] = vanilla["expiry"].astype(str)
+    for df in (binary, vanilla):
+        if "expiry" in df.columns:
+            df["expiry"] = df["expiry"].astype(str).str.strip()
 
-    vanilla["type"] = vanilla["type"].astype(str).str.lower().str.strip()
+    # vanilla type normalization
+    if "type" in vanilla.columns:
+        vanilla["type"] = vanilla["type"].astype(str).str.lower().str.strip()
 
-    # build spot map for fast lookup
+    # Build spot map
     spot_map = spot.set_index(["date", "underlying"])["spot"].astype(float).to_dict()
 
-    rows = []
+    rows: list[dict] = []
 
-    # iterate binaries
+    # Iterate each binary option as reference (paper: binaries define the universe) :contentReference[oaicite:7]{index=7}
     for _, b in binary.iterrows():
         date = str(b["date"])
         underlying = str(b["underlying"])
@@ -71,11 +74,18 @@ def scan_opportunities(
             continue
         spot_val = float(s)
 
-        # vanilla slice: same date/underlying/expiry only
+        # Determine trade direction (paper rule)
+        if Kb < spot_val:
+            required_vanilla_type = "call"
+        else:
+            required_vanilla_type = "put"
+
+        # Candidate vanilla slice: same date/underlying/expiry + correct direction
         v_slice = vanilla[
             (vanilla["date"] == date)
             & (vanilla["underlying"] == underlying)
             & (vanilla["expiry"] == expiry)
+            & (vanilla["type"] == required_vanilla_type)
         ]
         if v_slice.empty:
             continue
@@ -83,7 +93,16 @@ def scan_opportunities(
         for _, v in v_slice.iterrows():
             Kv = float(v["strike"])
             vtype = str(v["type"])
-            Pv_usd = float(v["price_usd"])
+
+            # --- Convert vanilla premium to USD if needed ---
+            # Deribit options are often quoted in underlying units; paper converts to USD using spot 
+            if "price_usd" in v and pd.notna(v["price_usd"]):
+                Pv_usd = float(v["price_usd"])
+            elif "price" in v and pd.notna(v["price"]):
+                Pv_underlying = float(v["price"])
+                Pv_usd = Pv_underlying * spot_val
+            else:
+                raise ValueError("vanilla_df rows must have 'price_usd' or 'price'.")
 
             cand = check_and_build_candidate(
                 date=date,
@@ -104,33 +123,30 @@ def scan_opportunities(
             if cand.edge < min_edge:
                 continue
 
-            rows.append({
-                "date": cand.date,
-                "underlying": cand.underlying,
-                "expiry": cand.expiry,
-                "spot": cand.spot,
-
-                "binary_type": cand.binary_type,
-                "Kb": cand.Kb,
-                "Pb": cand.Pb,
-
-                "vanilla_type": cand.vanilla_type,
-                "Kv": cand.Kv,
-                "Pv_usd": cand.Pv_usd,
-
-                "Qv": cand.Qv,
-                "Qb": cand.Qb,
-                "fee_usd": cand.fee_usd,
-
-                "kv_bound": cand.kv_bound,
-                "edge": cand.edge,
-            })
+            rows.append(
+                {
+                    "date": cand.date,
+                    "underlying": cand.underlying,
+                    "expiry": cand.expiry,
+                    "spot": cand.spot,
+                    "binary_type": cand.binary_type,
+                    "Kb": cand.Kb,
+                    "Pb": cand.Pb,
+                    "vanilla_type": cand.vanilla_type,
+                    "Kv": cand.Kv,
+                    "Pv_usd": cand.Pv_usd,
+                    "Qv": cand.Qv,
+                    "Qb": cand.Qb,
+                    "fee_usd": cand.fee_usd,
+                    "kv_bound": cand.kv_bound,
+                    "edge": cand.edge,
+                }
+            )
 
     out = pd.DataFrame(rows)
     if out.empty:
         return out
 
-    # best opportunities first
     out = out.sort_values(["date", "underlying", "expiry", "edge"], ascending=[True, True, True, False])
     out = out.reset_index(drop=True)
     return out
