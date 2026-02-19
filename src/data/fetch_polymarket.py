@@ -1,4 +1,4 @@
-# src/data/fetch_polymarket.py
+#transform binary option into "traditional" ones 
 from __future__ import annotations
 
 import json
@@ -9,19 +9,18 @@ from typing import Literal, Optional
 
 import requests
 
-# Public endpoints (no wallet needed)
+#mercati
 GAMMA_BASE = "https://gamma-api.polymarket.com"
+#prices (central limit order book)
 CLOB_BASE = "https://clob.polymarket.com"
 
 Currency = Literal["BTC", "ETH"]
 
-# --- simple strike extractor for "above $70,000" style questions ---
+
 _STRIKE_RE = re.compile(r"\$?(\d{1,3}(?:,\d{3})+|\d+)")
 
 
-# ----------------------------
-# Robust HTTP helpers
-# ----------------------------
+
 def _get_json(url: str, params: dict | None = None, *, timeout: int = 10, retries: int = 5) -> dict | list:
     """
     Robust GET with exponential backoff.
@@ -48,11 +47,9 @@ def _get_json(url: str, params: dict | None = None, *, timeout: int = 10, retrie
     raise RuntimeError(f"Polymarket request failed after {retries} retries: {last_err}")
 
 
+#binary price (prob)
 def fetch_midpoint(token_id: str) -> Optional[float]:
-    """
-    Try to fetch midpoint price for a token_id from the public CLOB endpoint.
-    Returns None if unavailable.
-    """
+
     try:
         j = _get_json(f"{CLOB_BASE}/midpoint", {"token_id": token_id}, timeout=10, retries=3)
     except Exception as e:
@@ -70,15 +67,9 @@ def fetch_midpoint(token_id: str) -> Optional[float]:
     return None
 
 
-# ----------------------------
-# Parsing utilities
-# ----------------------------
+#extract nuemric strike from market question
 def _parse_strike(question: str) -> Optional[float]:
-    """
-    Extract a numeric strike from a market question.
-    Works for common forms like:
-      "Will Bitcoin be above $70,000 on ...?"
-    """
+
     m = _STRIKE_RE.search(question)
     if not m:
         return None
@@ -89,11 +80,8 @@ def _parse_strike(question: str) -> Optional[float]:
         return None
 
 
+#iso date
 def _parse_expiry_iso(end_date: str) -> Optional[str]:
-    """
-    Gamma 'endDate' is usually ISO like '2026-02-27T08:00:00Z' (or similar).
-    We convert it to UTC date 'YYYY-MM-DD'.
-    """
     try:
         dt = datetime.fromisoformat(end_date.replace("Z", "+00:00"))
         return dt.astimezone(timezone.utc).date().isoformat()
@@ -114,32 +102,13 @@ def _safe_json_loads(x) -> Optional[object]:
     return None
 
 
-# ----------------------------
-# Main fetcher
-# ----------------------------
 def fetch_crypto_threshold_markets(
     *,
     currency: Currency,
     limit: int = 200,
     active: bool = True,
 ) -> list[dict]:
-    """
-    Fetch Polymarket markets and keep those that *look like* crypto threshold markets.
-
-    Returns rows with:
-      - underlying: 'BTC'/'ETH'
-      - expiry: 'YYYY-MM-DD' (UTC date from market endDate)
-      - strike: float
-      - price: midpoint price for YES token (0..1) if available
-      - question: original market question
-      - yes_token_id: token id used for pricing (debug)
-
-    Notes:
-    - We do NOT force an expiry filter here. For backtesting you generally want to
-      download everything and then intersect with Deribit expiries later.
-    - This function is "best-effort": if midpoint isn't available, it falls back to
-      outcomePrices (if present). If neither is available, it skips the market.
-    """
+   
     cur = currency.upper()
     markets = _get_json(f"{GAMMA_BASE}/markets", {"limit": limit, "active": active}, timeout=15, retries=5)
 
@@ -211,7 +180,7 @@ def fetch_crypto_threshold_markets(
 
     return rows
 
-
+#look at vanilla expiry
 def fetch_crypto_threshold_markets_for_expiry(
     *,
     currency: Currency,
@@ -219,8 +188,6 @@ def fetch_crypto_threshold_markets_for_expiry(
     limit: int = 400,
     active: bool = True,
 ) -> list[dict]:
-    """
-    Convenience wrapper: fetch and then filter to a specific expiry date.
-    """
+    
     all_rows = fetch_crypto_threshold_markets(currency=currency, limit=limit, active=active)
     return [r for r in all_rows if r["expiry"] == expiry_iso]

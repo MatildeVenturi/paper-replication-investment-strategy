@@ -1,4 +1,4 @@
-# src/arbitrage/scanner.py
+#find combinations as in the paper 
 from __future__ import annotations
 
 import pandas as pd
@@ -10,31 +10,12 @@ def scan_opportunities(
     spot_df: pd.DataFrame,
     binary_df: pd.DataFrame,
     vanilla_df: pd.DataFrame,
-    *,
-    Qv: float = 1.0,
+    *, 
+    Qv: float = 1.0, #vanilla qt to buy
     fee_usd: float = 0.0,
     min_edge: float = 0.0,
 ) -> pd.DataFrame:
-    """
-    Paper-aligned scanner.
-
-    Inputs (expected columns):
-      spot_df:    date, underlying, spot
-      binary_df:  date, underlying, expiry, strike, price        (Polymarket: price in USD in (0,1))
-      vanilla_df: date, underlying, expiry, strike, type, price  (Deribit: price often in underlying units)
-                 optionally vanilla_df may have price_usd already
-
-    Key paper rules:
-      - decision time is 08:00 UTC (your dataset should already be built that way) :contentReference[oaicite:4]{index=4}
-      - direction:
-          if Kb < spot:   binary is PUT, vanilla must be CALL
-          else:           binary is CALL, vanilla must be PUT :contentReference[oaicite:5]{index=5}
-      - unify condition uses vanilla premium in USD terms for consistency with binary payoff 
-
-    Returns:
-      DataFrame of candidates sorted by edge desc.
-    """
-
+   
     # Copies
     spot = spot_df.copy()
     binary = binary_df.copy()
@@ -94,8 +75,7 @@ def scan_opportunities(
             Kv = float(v["strike"])
             vtype = str(v["type"])
 
-            # --- Convert vanilla premium to USD if needed ---
-            # Deribit options are often quoted in underlying units; paper converts to USD using spot 
+           
             if "price_usd" in v and pd.notna(v["price_usd"]):
                 Pv_usd = float(v["price_usd"])
             elif "price" in v and pd.notna(v["price"]):
@@ -112,7 +92,7 @@ def scan_opportunities(
                 Kb=Kb,
                 Pb=Pb,
                 Kv=Kv,
-                vanilla_type=vtype,   # "call" or "put"
+                vanilla_type=vtype,   
                 Pv_usd=Pv_usd,
                 Qv=Qv,
                 fee_usd=fee_usd,

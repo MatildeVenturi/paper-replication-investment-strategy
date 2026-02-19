@@ -1,4 +1,4 @@
-# scripts/build_spot_csv_deribit.py
+
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -12,7 +12,6 @@ DERIBIT_URL = "https://www.deribit.com/api/v2"
 
 
 def _project_root() -> Path:
-    # adatta se la tua struttura è diversa
     return Path(__file__).resolve().parents[2]
 
 
@@ -32,12 +31,9 @@ def _deribit_get(method: str, params: dict) -> dict:
 
 
 def _get_trades(instrument_name: str, start_ms: int, end_ms: int, limit: int = 1000) -> list[dict]:
-    """
-    Pull trades for [start_ms, end_ms). Uses pagination via 'end_timestamp'
-    by walking backwards until we cover the whole window.
-    """
+   
     all_trades: list[dict] = []
-    # Deribit endpoint returns trades sorted by timestamp DESC by default.
+   
     cursor_end = end_ms
 
     while True:
@@ -75,12 +71,6 @@ def _get_trades(instrument_name: str, start_ms: int, end_ms: int, limit: int = 1
 
 
 def _vwap_from_trades(trades: list[dict]) -> float:
-    """
-    VWAP = sum(price * amount) / sum(amount)
-    Deribit trades typically have:
-      - price (float)
-      - amount (float)  # base amount (BTC/ETH)
-    """
     if not trades:
         raise ValueError("No trades to compute VWAP")
     num = 0.0
@@ -99,18 +89,8 @@ def build_spot_csv_deribit_vwap(
     underlying: str,
     days_back: int = 30,
     out_rel_path: str = "data/raw/spot.csv",
-    window_minutes: int = 30,  # paper uses 07:45–08:15 => 30 minutes window around 08:00
+    window_minutes: int = 30,  # paper uses 30 minutes window around 08:00
 ) -> Path:
-    """
-    Builds spot.csv using Deribit spot pair and VWAP around 08:00 UTC.
-
-    Paper method:
-      - daily observation at 08:00 UTC
-      - use minute-level data over 07:45–08:15 UTC and compute VWAP :contentReference[oaicite:1]{index=1}
-
-    We implement VWAP using trades between:
-      [08:00 - window/2, 08:00 + window/2)
-    """
     root = _project_root()
     out_path = root / out_rel_path
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -119,7 +99,7 @@ def build_spot_csv_deribit_vwap(
     if u not in {"BTC", "ETH"}:
         raise ValueError("underlying must be 'BTC' or 'ETH'")
 
-    # Paper uses BTC/USDC on Deribit for spot reference :contentReference[oaicite:2]{index=2}
+    # Paper uses BTC/USDC on Deribit for spot reference 
     instrument = f"{u}_USDC"
 
     end_day = datetime.now(timezone.utc).date()
@@ -128,6 +108,8 @@ def build_spot_csv_deribit_vwap(
     half = timedelta(minutes=window_minutes / 2)
 
     rows: list[dict] = []
+
+#problem: doesn't find trades in that window?
     for d in pd.date_range(start_day, end_day, freq="D"):
         center = datetime(d.year, d.month, d.day, 8, 0, 0, tzinfo=timezone.utc)
         start_dt = center - half
@@ -156,3 +138,5 @@ if __name__ == "__main__":
         days_back=30,
         out_rel_path="data/raw/spot.csv",
     )
+
+

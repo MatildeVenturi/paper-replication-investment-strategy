@@ -1,4 +1,4 @@
-# src/run_scan.py
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -6,7 +6,7 @@ from pathlib import Path
 from src.data.loaders import load_spot, load_binary, load_vanilla
 from src.arbitrage.scanner import scan_opportunities
 
-
+#loads csv,look for arbotrage, if found load into csv
 def main():
     spot = load_spot("data/raw/spot.csv")
     binary = load_binary("data/raw/binary.csv")

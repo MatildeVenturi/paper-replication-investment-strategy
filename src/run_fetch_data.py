@@ -1,4 +1,3 @@
-# src/run_fetch_data.py
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
@@ -6,6 +5,7 @@ from pathlib import Path
 
 import pandas as pd
 
+#call API and save data.raw
 from src.data.fetch_deribit import (
     fetch_spot_index,
     fetch_vanilla_snapshot,
@@ -18,9 +18,6 @@ from src.data.fetch_polymarket import fetch_crypto_threshold_markets_for_expiry
 def main() -> None:
     Path("data/raw").mkdir(parents=True, exist_ok=True)
 
-    # -----------------
-    # CONFIG
-    # -----------------
     underlying = "BTC"  # or "ETH"
 
     # decision date (paper: 08:00 UTC; we store day key)
@@ -31,18 +28,13 @@ def main() -> None:
     expiry_iso = pick_next_expiry(underlying, min_expiry_iso)
     print(f"Using expiry: {expiry_iso}")
 
-    # -----------------
-    # 1) SPOT
-    # -----------------
+   
     spot = float(fetch_spot_index(underlying))
     pd.DataFrame(
         [{"date": date_iso, "underlying": underlying, "spot": spot}]
     ).to_csv("data/raw/spot.csv", index=False)
     print("Wrote data/raw/spot.csv")
 
-    # -----------------
-    # 2) VANILLA (Deribit)
-    # -----------------
     vanilla_rows = fetch_vanilla_snapshot(
         currency=underlying,
         expiry_iso=expiry_iso,
@@ -55,9 +47,7 @@ def main() -> None:
     ).to_csv("data/raw/vanilla.csv", index=False)
     print(f"Wrote data/raw/vanilla.csv ({len(vanilla_rows)} rows)")
 
-    # -----------------
-    # 3) BINARY (Polymarket)
-    # -----------------
+
     binary_rows = fetch_crypto_threshold_markets_for_expiry(
     currency=underlying,
     expiry_iso=expiry_iso,

@@ -1,4 +1,4 @@
-# src/arbitrage/strategy.py
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -15,22 +15,10 @@ BinaryType = Literal["call", "put"]
 VanillaType = Literal["call", "put"]
 
 
+#arbitrage trade description
 @dataclass(frozen=True)
 class TradeCandidate:
-    """
-    A paper-aligned trade candidate for the "vanilla + binary" portfolio.
-
-    Conventions (paper):
-      - decision time at 08:00 UTC (handled upstream when building datasets)
-      - choose direction using K_B vs spot at decision time:
-          if K_B < S_t -> long binary PUT + long vanilla CALL
-          else         -> long binary CALL + long vanilla PUT
-      - Pv_usd is the vanilla premium expressed in USD terms (even if the
-        option is quoted in underlying units on Deribit, you convert using spot)
-      - Qv is the number of vanilla contracts (Deribit: 1 contract = 1 unit underlying)
-      - Qb is the number of binary shares/contracts (pay $1 if event happens)
-    """
-
+ 
     # keys
     date: str
     underlying: str
@@ -61,13 +49,7 @@ class TradeCandidate:
 
 
 def infer_direction(spot: float, Kb: float) -> tuple[BinaryType, VanillaType]:
-    """
-    Paper direction rule:
-      - if Kb < spot:  binary PUT + vanilla CALL
-      - else:          binary CALL + vanilla PUT
-
-    We treat Kb == spot as the 'else' branch (CALL+PUT) to keep deterministic behavior.
-    """
+  
     if spot <= 0:
         raise ValueError("spot must be > 0.")
     if Kb < spot:
@@ -89,18 +71,7 @@ def check_and_build_candidate(
     Qv: float = 1.0,
     fee_usd: float = 0.0,
 ) -> Optional[TradeCandidate]:
-    """
-    Paper-aligned candidate construction:
-
-    1) infer direction from K_B vs spot -> required vanilla type
-    2) compute strike bound on K_V (unified condition, Section 3.2)
-    3) accept only if K_V is inside the valid region
-    4) compute Q_B needed to cover the vanilla premium when vanilla finishes OTM
-       (i.e., binary finishes ITM), per Section 3.2
-
-    Returns:
-      TradeCandidate if condition passes; otherwise None.
-    """
+   
     # Basic sanity checks
     if spot <= 0:
         return None
