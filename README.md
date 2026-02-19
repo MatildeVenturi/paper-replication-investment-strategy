@@ -1,16 +1,13 @@
 # paper-replication-investment-strategy
 
 ## Goal
-Replicate the results of: *[Paper title, year]*.
+Replicate the results of: Derivative Arbitrage Strategies in Cryptocurrency Markets, Augustin Valery
 
 ## Project structure
 - `src/`: code
 - `notebooks/`: exploration
-- `data/`: datasets (not committed if proprietary)
+- `data/`: datasets 
 - `reports/`: figures and tables
 - `tests/`: tests
 
-## Reproducibility
-1. Create environment
-2. Run pipeline / notebooks
-3. Generate results in `reports/`
+
