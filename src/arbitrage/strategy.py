@@ -1,9 +1,8 @@
-
+# src/arbitrage/strategy.py
 from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal, Optional
-
 
 from src.arbitrage.conditions import (
     binary_qty_to_cover_vanilla,
@@ -15,10 +14,8 @@ BinaryType = Literal["call", "put"]
 VanillaType = Literal["call", "put"]
 
 
-#arbitrage trade description
 @dataclass(frozen=True)
 class TradeCandidate:
- 
     # keys
     date: str
     underlying: str
@@ -42,14 +39,17 @@ class TradeCandidate:
     Qb: float
     fee_usd: float
 
-    # condition diagnostics
+    # diagnostics
     kv_bound: float
     edge: float
-    # edge > 0 means the vanilla strike is strictly inside the arbitrage region
 
 
 def infer_direction(spot: float, Kb: float) -> tuple[BinaryType, VanillaType]:
-  
+    """
+    Paper rule (as you had it):
+    - if Kb < spot: binary is "put", vanilla should be call
+    - else: binary is "call", vanilla should be put
+    """
     if spot <= 0:
         raise ValueError("spot must be > 0.")
     if Kb < spot:
@@ -70,12 +70,22 @@ def check_and_build_candidate(
     Pv_usd: float,
     Qv: float = 1.0,
     fee_usd: float = 0.0,
+    # -------------------------
+    # NEW "less strict" knobs
+    # -------------------------
+    edge_epsilon: float = 100.0,   # allow near-arb within this slack (strike units)
+    pb_clip: float = 0.02,         # ignore Pb too close to 0 or 1 (unstable bounds)
 ) -> Optional[TradeCandidate]:
-   
-    # Basic sanity checks
+    """
+    Returns a TradeCandidate if it passes (relaxed) paper conditions.
+
+    Changes vs your original:
+    - drops extreme Pb (near 0/1) which makes bounds explode and kills matching
+    - relaxes strict inequality edge>0 into edge>-edge_epsilon (near-arbitrage)
+    """
+
+    # basic sanity
     if spot <= 0:
-        return None
-    if not (0.0 < Pb < 1.0):
         return None
     if Qv <= 0:
         return None
@@ -84,28 +94,32 @@ def check_and_build_candidate(
     if fee_usd < 0:
         return None
 
-    # 1) direction
+    # drop numerically extreme binary probs
+    if not (pb_clip < Pb < 1.0 - pb_clip):
+        return None
+
+    # direction constraint
     binary_type, required_vanilla_type = infer_direction(spot, Kb)
     if vanilla_type != required_vanilla_type:
         return None
 
-    # 2) compute bound and "edge"
+    # bound + edge
     if vanilla_type == "call":
-        # Condition: K_V <= bound
         kv_bound = kv_bound_for_call_case(Kb=Kb, Qv=Qv, Pv_usd=Pv_usd, Pb=Pb)
-        edge = kv_bound - Kv
-        ok = edge > 0  # strict >0 gives a small buffer; change to >=0 if you want weak inequality
+        raw_edge = kv_bound - Kv  # >0 good
     else:
-        # Condition: K_V >= bound
         kv_bound = kv_bound_for_put_case(Kb=Kb, Qv=Qv, Pv_usd=Pv_usd, Pb=Pb)
-        edge = Kv - kv_bound
-        ok = edge > 0
+        raw_edge = Kv - kv_bound  # >0 good
 
-    if not ok:
+    # Relaxed condition: allow small violations
+    if raw_edge < -edge_epsilon:
         return None
 
-    # 3) size the binary leg to cover vanilla premium + fees in the worst-case branch
+    # size binary to cover worst-case branch (same as your original)
     Qb = binary_qty_to_cover_vanilla(Qv=Qv, Pv_usd=Pv_usd, fee_usd=fee_usd, Pb=Pb)
+
+    # Report "relaxed edge" (positive means inside after slack)
+    edge = raw_edge + edge_epsilon
 
     return TradeCandidate(
         date=str(date),

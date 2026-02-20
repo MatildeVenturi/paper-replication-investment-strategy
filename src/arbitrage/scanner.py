@@ -1,27 +1,50 @@
-#find combinations as in the paper 
+# src/arbitrage/scanner.py
 from __future__ import annotations
+
+from datetime import datetime
+from typing import Optional
 
 import pandas as pd
 
 from src.arbitrage.strategy import check_and_build_candidate
 
 
+def _parse_iso_date(d: str) -> Optional[datetime]:
+    try:
+        return datetime.fromisoformat(str(d))
+    except Exception:
+        return None
+
+
 def scan_opportunities(
     spot_df: pd.DataFrame,
     binary_df: pd.DataFrame,
     vanilla_df: pd.DataFrame,
-    *, 
-    Qv: float = 1.0, #vanilla qt to buy
+    *,
+    Qv: float = 1.0,
     fee_usd: float = 0.0,
     min_edge: float = 0.0,
+    # -------------------------
+    # NEW knobs
+    # -------------------------
+    edge_epsilon: float = 100.0,     # match strategy slack
+    pb_clip: float = 0.02,           # drop Pb extremes
+    nearest_expiry_days: int = 2,    # allow +/- N days when exact expiry match is missing
 ) -> pd.DataFrame:
-   
+    """
+    Scan for (relaxed) arbitrage / near-arbitrage candidates.
+
+    Changes vs your original:
+    - if exact expiry match is missing, uses nearest vanilla expiry within +/- nearest_expiry_days
+    - passes edge_epsilon and pb_clip into strategy to be less strict
+    """
+
     # Copies
     spot = spot_df.copy()
     binary = binary_df.copy()
     vanilla = vanilla_df.copy()
 
-    # Normalize string keys
+    # Normalize keys
     for df in (spot, binary, vanilla):
         for c in ("date", "underlying"):
             if c in df.columns:
@@ -33,16 +56,15 @@ def scan_opportunities(
         if "expiry" in df.columns:
             df["expiry"] = df["expiry"].astype(str).str.strip()
 
-    # vanilla type normalization
     if "type" in vanilla.columns:
         vanilla["type"] = vanilla["type"].astype(str).str.lower().str.strip()
 
-    # Build spot map
+    # Spot map
     spot_map = spot.set_index(["date", "underlying"])["spot"].astype(float).to_dict()
 
     rows: list[dict] = []
 
-    # Iterate each binary option as reference (paper: binaries define the universe) :contentReference[oaicite:7]{index=7}
+    # Iterate binaries
     for _, b in binary.iterrows():
         date = str(b["date"])
         underlying = str(b["underlying"])
@@ -55,47 +77,72 @@ def scan_opportunities(
             continue
         spot_val = float(s)
 
-        # Determine trade direction (paper rule)
-        if Kb < spot_val:
-            required_vanilla_type = "call"
-        else:
-            required_vanilla_type = "put"
+        # Determine required vanilla type (same as your original rule)
+        required_vanilla_type = "call" if Kb < spot_val else "put"
 
-        # Candidate vanilla slice: same date/underlying/expiry + correct direction
+        # Exact expiry slice
         v_slice = vanilla[
             (vanilla["date"] == date)
             & (vanilla["underlying"] == underlying)
             & (vanilla["expiry"] == expiry)
             & (vanilla["type"] == required_vanilla_type)
         ]
+
+        # If empty, try nearest expiry within +/- nearest_expiry_days
+        if v_slice.empty and nearest_expiry_days > 0:
+            base = vanilla[
+                (vanilla["date"] == date)
+                & (vanilla["underlying"] == underlying)
+                & (vanilla["type"] == required_vanilla_type)
+            ].copy()
+
+            if not base.empty:
+                b_exp = _parse_iso_date(expiry)
+                if b_exp is not None:
+                    def _abs_days(x) -> int:
+                        xdt = _parse_iso_date(x)
+                        if xdt is None:
+                            return 10**9
+                        return abs((xdt.date() - b_exp.date()).days)
+
+                    base["__abs_days"] = base["expiry"].apply(_abs_days)
+                    base = base[base["__abs_days"] <= nearest_expiry_days]
+                    if not base.empty:
+                        # Use the closest expiry group (smallest abs_days)
+                        min_d = int(base["__abs_days"].min())
+                        v_slice = base[base["__abs_days"] == min_d]
+
         if v_slice.empty:
             continue
 
+        # Evaluate all candidate vanilla rows in the slice
         for _, v in v_slice.iterrows():
             Kv = float(v["strike"])
             vtype = str(v["type"])
 
-           
+            # price conversion
             if "price_usd" in v and pd.notna(v["price_usd"]):
                 Pv_usd = float(v["price_usd"])
             elif "price" in v and pd.notna(v["price"]):
                 Pv_underlying = float(v["price"])
                 Pv_usd = Pv_underlying * spot_val
             else:
-                raise ValueError("vanilla_df rows must have 'price_usd' or 'price'.")
+                continue
 
             cand = check_and_build_candidate(
                 date=date,
                 underlying=underlying,
-                expiry=expiry,
+                expiry=str(v.get("expiry", expiry)),  # keep the vanilla expiry actually used
                 spot=spot_val,
                 Kb=Kb,
                 Pb=Pb,
                 Kv=Kv,
-                vanilla_type=vtype,   
+                vanilla_type=vtype,
                 Pv_usd=Pv_usd,
                 Qv=Qv,
                 fee_usd=fee_usd,
+                edge_epsilon=edge_epsilon,
+                pb_clip=pb_clip,
             )
 
             if cand is None:
